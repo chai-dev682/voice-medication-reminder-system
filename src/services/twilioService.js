@@ -100,6 +100,7 @@ const handleCallStatus = async (statusData) => {
 };
 
 module.exports = {
+  MEDICATION_REMINDER_MESSAGE,
   makeCall,
   handleAnsweringMachine,
   handleCallStatus,

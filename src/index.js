@@ -1,10 +1,12 @@
 require('dotenv').config();
 const express = require('express');
+const expressWs = require('express-ws');
 const path = require('path');
+const callController = require('./controllers/callController');
 const routes = require('./routes');
 const logger = require('./utils/logger');
 
-const app = express();
+const app = expressWs(express()).app;
 const PORT = process.env.PORT || 3000;
 
 // Middleware
@@ -16,6 +18,7 @@ app.use(express.static(path.join(__dirname, '../public')));
 
 // Routes
 app.use('/api', routes);
+app.ws('/api/calls/stream', callController.handleStream);
 
 // Health check endpoint
 app.get('/', (req, res) => {

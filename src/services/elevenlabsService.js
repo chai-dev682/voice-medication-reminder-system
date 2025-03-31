@@ -118,6 +118,7 @@ const deleteAudioFile = async (fileName) => {
 };
 
 module.exports = {
+  elevenlabs,
   getVoices,
   textToSpeech,
   generateMedicationReminder,
