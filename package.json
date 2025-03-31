@@ -1,0 +1,33 @@
+{
+  "name": "voice-medication-reminder-system",
+  "version": "1.0.0",
+  "description": "A voice-driven medication reminder system that uses Twilio to make calls to patients, remind them about their medications, and capture their responses using Speech-to-Text technology.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chai-dev682/voice-medication-reminder-system.git"
+  },
+  "keywords": [
+    "Voice",
+    "Medication",
+    "Reminder",
+    "Twilio",
+    "Node.js",
+    "STT",
+    "TTS",
+    "SMS",
+    "RESTful",
+    "API",
+    "Elevenlabs"
+  ],
+  "author": "Chai-dev682",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/chai-dev682/voice-medication-reminder-system/issues"
+  },
+  "homepage": "https://github.com/chai-dev682/voice-medication-reminder-system#readme"
+}
