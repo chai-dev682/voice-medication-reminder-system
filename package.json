@@ -32,6 +32,7 @@
   "homepage": "https://github.com/chai-dev682/voice-medication-reminder-system#readme",
   "dependencies": {
     "dotenv": "^16.4.7",
+    "elevenlabs": "^1.55.0",
     "express": "^4.21.2",
     "twilio": "^5.5.1"
   }

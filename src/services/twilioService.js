@@ -1,5 +1,6 @@
 const twilio = require('twilio');
 const logger = require('../utils/logger');
+const elevenlabsService = require('./elevenlabsService');
 
 // Initialize Twilio client
 const client = twilio(
@@ -11,25 +12,45 @@ const MEDICATION_REMINDER_MESSAGE = "Hello, this is a reminder from your healthc
 const VOICEMAIL_MESSAGE = "We called to check on your medication but couldn't reach you. Please call us back or take your medications if you haven't done so."
 
 /**
- * Make an outgoing call to a patient
+ * Generate TwiML for outgoing calls using ElevenLabs TTS
+ * @param {string} audioUrl - URL to the audio file
+ * @returns {Object} - Twilio Voice Response object
+ */
+const generateTwimlWithElevenLabs = (audioUrl) => {
+  const twiml = new twilio.twiml.VoiceResponse();
+  twiml.play(audioUrl);
+  return twiml;
+};
+
+/**
+ * Make an outgoing call to a patient with ElevenLabs TTS
  * @param {string} phoneNumber - The patient's phone number
+ * @param {string} message - Optional custom message (defaults to medication reminder)
  * @returns {Promise} - The Twilio call object
  */
-const makeCall = async (phoneNumber) => {
+const makeCall = async (phoneNumber, message = MEDICATION_REMINDER_MESSAGE) => {
   try {
+    // Generate audio with ElevenLabs
+    const audioUrl = await elevenlabsService.generateMedicationReminder(message);
+    
+    // Create TwiML with the audio URL
+    const twiml = generateTwimlWithElevenLabs(audioUrl);
+    
+    // Make the call
     const call = await client.calls.create({
       to: phoneNumber,
       from: process.env.TWILIO_PHONE_NUMBER,
-      twiml: `<Response><Say>${MEDICATION_REMINDER_MESSAGE}</Say></Response>`,
-      machineDetection: 'Enable',
+      machineDetection: 'DetectMessageEnd',
+      twiml: twiml.toString(),
       statusCallback: `${process.env.BASE_URL}/api/calls/status`,
       statusCallbackMethod: 'POST',
       statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed']
     });
     
+    logger.info(`Call initiated to ${phoneNumber} with ElevenLabs TTS`);
     return call;
   } catch (error) {
-    logger.error('Error making call:', error);
+    logger.error('Error making call with ElevenLabs TTS:', error);
     throw error;
   }
 };
@@ -72,7 +93,6 @@ const handleAnsweringMachine = async (phoneNumber, callSid) => {
  */
 const handleCallStatus = async (statusData) => {
   const { CallSid, CallStatus, To, AnsweredBy } = statusData;
-  console.log(statusData);
   
   logger.info(`Call ${CallSid} to ${To} status: ${CallStatus}, answered by: ${AnsweredBy || 'N/A'}`);
   
@@ -82,5 +102,6 @@ const handleCallStatus = async (statusData) => {
 module.exports = {
   makeCall,
   handleAnsweringMachine,
-  handleCallStatus
+  handleCallStatus,
+  generateTwimlWithElevenLabs
 };
