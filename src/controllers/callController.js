@@ -4,6 +4,9 @@ const twilioService = require('../services/twilioService');
 const elevenlabs = require('../services/elevenlabsService');
 const logger = require('../utils/logger');
 const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
+const llmService = require('../services/llmService');
+
+
 const deepgramClient = createClient(process.env.DEEPGRAM_API_KEY);
 
 const MEDICATION_REMINDER_MESSAGE = "Hello, this is a reminder from your healthcare provider to confirm your medications for the day. Please confirm if you have taken your Aspirin, Cardivol, and Metformin today.";
@@ -140,7 +143,7 @@ const handleStream = async (ws, req) => {
         
         // Set up Deepgram for this stream
         try {
-          const deepgram = setupDeepgram(streamSid);
+          const deepgram = setupDeepgram(streamSid, ws);
           activeTranscriptions.set(streamSid, deepgram);
           
           // Generate speech with ElevenLabs
@@ -272,7 +275,7 @@ const handleStream = async (ws, req) => {
 };
 
 // Setup Deepgram for speech-to-text
-const setupDeepgram = (streamSid) => {
+const setupDeepgram = (streamSid, ws) => {
   let is_finals = [];
   
   const deepgram = deepgramClient.listen.live({
@@ -307,6 +310,31 @@ const setupDeepgram = (streamSid) => {
           const streamData = activeStreams.get(streamSid);
           if (streamData) {
             streamData.transcripts.push(utterance);
+            
+            // Process with LLM and respond to the patient
+            (async () => {
+              try {
+                const llmResponse = await llmService.generateResponse(utterance);
+                
+                // Generate speech with ElevenLabs for the LLM response
+                const response = await elevenlabs.textToSpeechToStream(llmResponse);
+                const readableStream = Readable.from(response);
+                const audioArrayBuffer = await streamToArrayBuffer(readableStream);
+                
+                // Send the audio to the call
+                ws.send(
+                  JSON.stringify({
+                    streamSid,
+                    event: 'media',
+                    media: {
+                      payload: Buffer.from(audioArrayBuffer).toString('base64'),
+                    },
+                  })
+                );
+              } catch (error) {
+                logger.error(`Error generating LLM response for stream ${streamSid}:`, error);
+              }
+            })();
           }
         }
       }
