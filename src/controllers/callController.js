@@ -3,8 +3,14 @@ const Readable = require('stream').Readable;
 const twilioService = require('../services/twilioService');
 const elevenlabs = require('../services/elevenlabsService');
 const logger = require('../utils/logger');
+const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
+const deepgramClient = createClient(process.env.DEEPGRAM_API_KEY);
 
 const MEDICATION_REMINDER_MESSAGE = "Hello, this is a reminder from your healthcare provider to confirm your medications for the day. Please confirm if you have taken your Aspirin, Cardivol, and Metformin today.";
+
+// Store active call streams and transcriptions
+const activeStreams = new Map();
+const activeTranscriptions = new Map();
 
 function streamToArrayBuffer(readableStream) {
   return new Promise((resolve, reject) => {
@@ -73,11 +79,31 @@ const handleStream = async (ws, req) => {
   ws.on('message', async (data) => {
     try {
       const message = JSON.parse(data);
+      
       if (message.event === 'start' && message.start) {
         const streamSid = message.start.streamSid;
+        const callSid = message.start.callSid;
+        
+        // Store the stream information
+        activeStreams.set(streamSid, {
+          callSid,
+          ws,
+          startTime: new Date(),
+          transcripts: []
+        });
+        
+        logger.info(`Stream started for call ${callSid} with stream ${streamSid}`);
+        
+        // Set up Deepgram for this stream
+        const deepgram = setupDeepgram(streamSid);
+        activeTranscriptions.set(streamSid, deepgram);
+        
+        // Generate speech with ElevenLabs
         const response = await elevenlabs.textToSpeechToStream(MEDICATION_REMINDER_MESSAGE);
         const readableStream = Readable.from(response);
         const audioArrayBuffer = await streamToArrayBuffer(readableStream);
+        
+        // Send the audio to the call
         ws.send(
           JSON.stringify({
             streamSid,
@@ -87,16 +113,116 @@ const handleStream = async (ws, req) => {
             },
           })
         );
+      } else if (message.event === 'media' && message.media) {
+        // Handle incoming audio from the call (patient's response)
+        if (message.media.track === "inbound") {
+          const streamSid = message.streamSid;
+          const deepgram = activeTranscriptions.get(streamSid);
+          
+          if (deepgram) {
+            // Send the audio to Deepgram for transcription
+            const rawAudio = Buffer.from(message.media.payload, 'base64');
+            deepgram.send(rawAudio);
+          }
+        }
+      } else if (message.event === 'stop' && message.stop) {
+        const streamSid = message.stop.streamSid;
+        logger.info(`Stream ${streamSid} ended`);
+        
+        // Clean up Deepgram connection
+        const deepgram = activeTranscriptions.get(streamSid);
+        if (deepgram) {
+          deepgram.finish();
+          activeTranscriptions.delete(streamSid);
+        }
+        
+        // Get all transcripts for this call
+        const streamData = activeStreams.get(streamSid);
+        if (streamData) {
+          logger.info(`Call transcripts: ${streamData.transcripts.join(' ')}`);
+        }
+        
+        activeStreams.delete(streamSid);
       }
     } catch (error) {
       logger.error('Error in WebSocket stream:', error);
     }
   });
+  
   ws.on('error', (error) => {
     logger.error('WebSocket error:', error);
   });
+  
+  ws.on('close', () => {
+    // Clean up any streams associated with this connection
+    for (const [streamSid, stream] of activeStreams.entries()) {
+      if (stream.ws === ws) {
+        // Clean up Deepgram connection
+        const deepgram = activeTranscriptions.get(streamSid);
+        if (deepgram) {
+          deepgram.finish();
+          activeTranscriptions.delete(streamSid);
+        }
+        
+        activeStreams.delete(streamSid);
+        logger.info(`Cleaned up stream ${streamSid} on WebSocket close`);
+      }
+    }
+  });
 };
 
+// Setup Deepgram for speech-to-text
+const setupDeepgram = (streamSid) => {
+  let is_finals = [];
+  
+  const deepgram = deepgramClient.listen.live({
+    model: "nova-2-phonecall",
+    language: "en",
+    smart_format: true,
+    encoding: "mulaw",
+    sample_rate: 8000,
+    channels: 1,
+    multichannel: false,
+    no_delay: true,
+    interim_results: true,
+    endpointing: 300,
+    utterance_end_ms: 1000
+  });
+
+  deepgram.addListener(LiveTranscriptionEvents.Open, () => {
+    logger.info("Deepgram STT: Connected");
+  });
+
+  deepgram.addListener(LiveTranscriptionEvents.Transcript, (data) => {
+    const transcript = data.channel.alternatives[0].transcript;
+    if (transcript !== "") {
+      if (data.is_final) {
+        is_finals.push(transcript);
+        if (data.speech_final) {
+          const utterance = is_finals.join(" ");
+          is_finals = [];
+          logger.info(`Deepgram STT: [Speech Final] ${utterance}`);
+          
+          // Store the transcript
+          const streamData = activeStreams.get(streamSid);
+          if (streamData) {
+            streamData.transcripts.push(utterance);
+          }
+        }
+      }
+    }
+  });
+
+  deepgram.addListener(LiveTranscriptionEvents.Error, (error) => {
+    logger.error('Deepgram STT error:', error);
+  });
+
+  deepgram.addListener(LiveTranscriptionEvents.Close, () => {
+    logger.info('Deepgram STT: Disconnected');
+  });
+
+  return deepgram;
+};
 
 module.exports = {
   initiateCall,

@@ -50,6 +50,5 @@ const processPatientResponse = async (recordingUrl) => {
 
 module.exports = {
   transcribeAudio,
-  transcribeAudioBuffer,
   processPatientResponse
 }; 
