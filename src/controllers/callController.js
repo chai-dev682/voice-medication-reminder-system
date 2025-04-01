@@ -64,14 +64,36 @@ const handleCallStatusWebhook = async (req, res) => {
 };
 
 const handleIncomingCall = async (req, res) => {
-  const twiml = new VoiceResponse();
-  
-  twiml.connect().stream({
-    url: `wss://${process.env.BASE_DOMAIN}/api/calls/stream`
-  });
+  try {
+    const { CallSid, From } = req.body;
+    logger.info(`Incoming call received from ${From} with SID ${CallSid}`);
+    
+    // Log the call data in the required format
+    console.log('\n========== CALL DATA LOG ==========');
+    console.log(`Call SID: ${CallSid}`);
+    console.log(`Status: incoming call`);
+    console.log(`Patient Phone: ${From}`);
+    console.log('====================================\n');
+    
+    const twiml = new VoiceResponse();
+    
+    // Connect to media stream for real-time audio processing
+    twiml.connect().stream({
+      url: `wss://${process.env.BASE_DOMAIN}/api/calls/stream`
+    });
 
-  res.writeHead(200, { 'Content-Type': 'text/xml' });
-  res.end(twiml.toString());
+    res.writeHead(200, { 'Content-Type': 'text/xml' });
+    res.end(twiml.toString());
+  } catch (error) {
+    logger.error('Error handling incoming call:', error);
+    
+    // Send a basic response if there's an error
+    const twiml = new VoiceResponse();
+    twiml.say('We are experiencing technical difficulties. Please try again later.');
+    
+    res.writeHead(200, { 'Content-Type': 'text/xml' });
+    res.end(twiml.toString());
+  }
 };
 
 // websocket

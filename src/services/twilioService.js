@@ -56,6 +56,7 @@ const makeCall = async (phoneNumber) => {
  * Handle answering machine detection
  * @param {string} phoneNumber - The patient's phone number
  * @param {string} callSid - The Twilio call SID
+ * @returns {Promise<string>} - The action taken (voicemail or SMS)
  */
 const handleAnsweringMachine = async (phoneNumber, callSid) => {
   try {
@@ -65,6 +66,7 @@ const handleAnsweringMachine = async (phoneNumber, callSid) => {
     });
     
     logger.info(`Left voicemail for ${phoneNumber}`);
+    return 'voicemail left';
   } catch (error) {
     logger.error('Error leaving voicemail:', error);
     
@@ -77,8 +79,10 @@ const handleAnsweringMachine = async (phoneNumber, callSid) => {
       });
       
       logger.info(`Sent SMS to ${phoneNumber} after voicemail failure`);
+      return 'SMS sent';
     } catch (smsError) {
       logger.error('Error sending SMS:', smsError);
+      return 'failed to contact';
     }
   }
 };
@@ -91,9 +95,22 @@ const handleAnsweringMachine = async (phoneNumber, callSid) => {
 const handleCallStatus = async (statusData) => {
   const { CallSid, CallStatus, To, AnsweredBy } = statusData;
   
-  logger.info(`Call ${CallSid} to ${To} status: ${CallStatus}, answered by: ${AnsweredBy || 'N/A'}`);
-  
-  // TODO: Handle call status updates
+  // Log call data based on status
+  switch (CallStatus) {
+    case 'completed':
+      logger.info(`Call ${CallSid} to ${To} status: ${CallStatus}, answered by: ${AnsweredBy || 'N/A'}`);
+
+      if (AnsweredBy && AnsweredBy.includes('machine')) {
+        await handleAnsweringMachine(To, CallSid);
+      }
+      break;
+    case 'no-answer':
+    case 'busy':
+    case 'failed':
+      await handleAnsweringMachine(To, CallSid);
+    default:
+      logger.info(`Call ${CallSid} to ${To} status: ${CallStatus}, answered by: ${AnsweredBy || 'N/A'}`);
+  }
 };
 
 module.exports = {
