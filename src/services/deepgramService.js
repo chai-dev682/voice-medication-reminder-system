@@ -13,16 +13,16 @@ const transcribeAudio = async (audioUrl) => {
   try {
     logger.info(`Transcribing audio from: ${audioUrl}`);
     
-    const { result, error } = await deepgram.listen.prerecorded.transcribeUrl(
-      { url: audioUrl },
+    const response = await deepgram.listen.prerecorded.transcribeUrl(
+      audioUrl,
       {
-        punctuate: true,
-        model: 'general',
-        language: 'en-US',
+        model: 'nova-2',
+        language: 'en',
+        smart_format: true
       }
     );
     
-    const transcript = result.results.channels[0].alternatives[0].transcript;
+    const transcript = response.results.channels[0].alternatives[0].transcript;
     logger.info(`Transcription result: "${transcript}"`);
     
     return transcript;

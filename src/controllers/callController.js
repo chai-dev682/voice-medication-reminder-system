@@ -98,6 +98,23 @@ const handleIncomingCall = async (req, res) => {
 
 // websocket
 const handleStream = async (ws, req) => {
+  // Track connection state
+  let isConnected = true;
+  
+  // Set a ping interval to keep the connection alive
+  const pingInterval = setInterval(() => {
+    if (isConnected) {
+      try {
+        ws.ping();
+      } catch (error) {
+        logger.error('Error sending ping:', error);
+        clearInterval(pingInterval);
+      }
+    } else {
+      clearInterval(pingInterval);
+    }
+  }, 30000); // 30 seconds
+  
   ws.on('message', async (data) => {
     try {
       const message = JSON.parse(data);
@@ -105,6 +122,11 @@ const handleStream = async (ws, req) => {
       if (message.event === 'start' && message.start) {
         const streamSid = message.start.streamSid;
         const callSid = message.start.callSid;
+        
+        if (!streamSid || !callSid) {
+          logger.error('Missing streamSid or callSid in start event');
+          return;
+        }
         
         // Store the stream information
         activeStreams.set(streamSid, {
@@ -117,34 +139,50 @@ const handleStream = async (ws, req) => {
         logger.info(`Stream started for call ${callSid} with stream ${streamSid}`);
         
         // Set up Deepgram for this stream
-        const deepgram = setupDeepgram(streamSid);
-        activeTranscriptions.set(streamSid, deepgram);
-        
-        // Generate speech with ElevenLabs
-        const response = await elevenlabs.textToSpeechToStream(MEDICATION_REMINDER_MESSAGE);
-        const readableStream = Readable.from(response);
-        const audioArrayBuffer = await streamToArrayBuffer(readableStream);
-        
-        // Send the audio to the call
-        ws.send(
-          JSON.stringify({
-            streamSid,
-            event: 'media',
-            media: {
-              payload: Buffer.from(audioArrayBuffer).toString('base64'),
-            },
-          })
-        );
+        try {
+          const deepgram = setupDeepgram(streamSid);
+          activeTranscriptions.set(streamSid, deepgram);
+          
+          // Generate speech with ElevenLabs
+          const response = await elevenlabs.textToSpeechToStream(MEDICATION_REMINDER_MESSAGE);
+          const readableStream = Readable.from(response);
+          const audioArrayBuffer = await streamToArrayBuffer(readableStream);
+          
+          // Send the audio to the call
+          if (isConnected) {
+            ws.send(
+              JSON.stringify({
+                streamSid,
+                event: 'media',
+                media: {
+                  payload: Buffer.from(audioArrayBuffer).toString('base64'),
+                },
+              })
+            );
+          }
+        } catch (error) {
+          logger.error(`Error setting up stream ${streamSid}:`, error);
+          
+          // Clean up if setup fails
+          activeStreams.delete(streamSid);
+          activeTranscriptions.delete(streamSid);
+        }
       } else if (message.event === 'media' && message.media) {
         // Handle incoming audio from the call (patient's response)
-        if (message.media.track === "inbound") {
+        if (message.media.track === "inbound" && message.streamSid) {
           const streamSid = message.streamSid;
           const deepgram = activeTranscriptions.get(streamSid);
           
           if (deepgram) {
-            // Send the audio to Deepgram for transcription
-            const rawAudio = Buffer.from(message.media.payload, 'base64');
-            deepgram.send(rawAudio);
+            try {
+              // Send the audio to Deepgram for transcription
+              const rawAudio = Buffer.from(message.media.payload, 'base64');
+              deepgram.send(rawAudio);
+            } catch (error) {
+              logger.error(`Error sending audio to Deepgram for stream ${streamSid}:`, error);
+            }
+          } else {
+            logger.warn(`No Deepgram instance found for stream ${streamSid}`);
           }
         }
       } else if (message.event === 'stop' && message.stop) {
@@ -154,14 +192,27 @@ const handleStream = async (ws, req) => {
         // Clean up Deepgram connection
         const deepgram = activeTranscriptions.get(streamSid);
         if (deepgram) {
-          deepgram.finish();
-          activeTranscriptions.delete(streamSid);
+          try {
+            deepgram.finish();
+          } catch (error) {
+            logger.error(`Error finishing Deepgram for stream ${streamSid}:`, error);
+          } finally {
+            activeTranscriptions.delete(streamSid);
+          }
         }
         
         // Get all transcripts for this call
         const streamData = activeStreams.get(streamSid);
         if (streamData) {
-          logger.info(`Call transcripts: ${streamData.transcripts.join(' ')}`);
+          const transcripts = streamData.transcripts.join(' ');
+          logger.info(`Call transcripts: ${transcripts}`);
+          
+          // Log the call data in the required format
+          console.log('\n========== CALL DATA LOG ==========');
+          console.log(`Call SID: ${streamData.callSid}`);
+          console.log(`Status: completed`);
+          console.log(`Patient Response: "${transcripts}"`);
+          console.log('====================================\n');
         }
         
         activeStreams.delete(streamSid);
@@ -173,23 +224,50 @@ const handleStream = async (ws, req) => {
   
   ws.on('error', (error) => {
     logger.error('WebSocket error:', error);
+    isConnected = false;
+    clearInterval(pingInterval);
   });
   
   ws.on('close', () => {
+    isConnected = false;
+    clearInterval(pingInterval);
+    
     // Clean up any streams associated with this connection
     for (const [streamSid, stream] of activeStreams.entries()) {
       if (stream.ws === ws) {
         // Clean up Deepgram connection
         const deepgram = activeTranscriptions.get(streamSid);
         if (deepgram) {
-          deepgram.finish();
-          activeTranscriptions.delete(streamSid);
+          try {
+            deepgram.finish();
+          } catch (error) {
+            logger.error(`Error finishing Deepgram on close for stream ${streamSid}:`, error);
+          } finally {
+            activeTranscriptions.delete(streamSid);
+          }
+        }
+        
+        // Log final transcripts if available
+        if (stream.transcripts && stream.transcripts.length > 0) {
+          const transcripts = stream.transcripts.join(' ');
+          
+          // Log the call data in the required format
+          console.log('\n========== CALL DATA LOG ==========');
+          console.log(`Call SID: ${stream.callSid}`);
+          console.log(`Status: disconnected`);
+          console.log(`Patient Response: "${transcripts}"`);
+          console.log('====================================\n');
         }
         
         activeStreams.delete(streamSid);
         logger.info(`Cleaned up stream ${streamSid} on WebSocket close`);
       }
     }
+  });
+  
+  // Handle pong responses to track connection state
+  ws.on('pong', () => {
+    isConnected = true;
   });
 };
 
