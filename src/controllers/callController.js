@@ -4,6 +4,8 @@ const twilioService = require('../services/twilioService');
 const elevenlabs = require('../services/elevenlabsService');
 const logger = require('../utils/logger');
 
+const MEDICATION_REMINDER_MESSAGE = "Hello, this is a reminder from your healthcare provider to confirm your medications for the day. Please confirm if you have taken your Aspirin, Cardivol, and Metformin today.";
+
 function streamToArrayBuffer(readableStream) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -57,9 +59,9 @@ const handleCallStatusWebhook = async (req, res) => {
 
 const handleIncomingCall = async (req, res) => {
   const twiml = new VoiceResponse();
-  console.log(`wss://${process.env.BASE_URL}/api/calls/stream`);
+  
   twiml.connect().stream({
-    url: `wss://${process.env.BASE_URL}/api/calls/stream`
+    url: `wss://${process.env.BASE_DOMAIN}/api/calls/stream`
   });
 
   res.writeHead(200, { 'Content-Type': 'text/xml' });
@@ -69,28 +71,30 @@ const handleIncomingCall = async (req, res) => {
 // websocket
 const handleStream = async (ws, req) => {
   ws.on('message', async (data) => {
-    const message = JSON.parse(data);
-    if (message.event === 'start' && message.start) {
-      const streamSid = message.start.streamSid;
-      const response = await elevenlabs.elevenlabs.textToSpeech.convert("gOkFV1JMCt0G0n9xmBwV", {
-        model_id: 'eleven_turbo_v2_5',
-        output_format: 'ulaw_8000',
-        text: twilioService.MEDICATION_REMINDER_MESSAGE,
-      });
-      const readableStream = Readable.from(response);
-      const audioArrayBuffer = await streamToArrayBuffer(readableStream);
-      ws.send(
-        JSON.stringify({
-          streamSid,
-          event: 'media',
-          media: {
-            payload: Buffer.from(audioArrayBuffer).toString('base64'),
-          },
-        })
-      );
+    try {
+      const message = JSON.parse(data);
+      if (message.event === 'start' && message.start) {
+        const streamSid = message.start.streamSid;
+        const response = await elevenlabs.textToSpeechToStream(MEDICATION_REMINDER_MESSAGE);
+        const readableStream = Readable.from(response);
+        const audioArrayBuffer = await streamToArrayBuffer(readableStream);
+        ws.send(
+          JSON.stringify({
+            streamSid,
+            event: 'media',
+            media: {
+              payload: Buffer.from(audioArrayBuffer).toString('base64'),
+            },
+          })
+        );
+      }
+    } catch (error) {
+      logger.error('Error in WebSocket stream:', error);
     }
   });
-  ws.on('error', console.error);
+  ws.on('error', (error) => {
+    logger.error('WebSocket error:', error);
+  });
 };
 
 

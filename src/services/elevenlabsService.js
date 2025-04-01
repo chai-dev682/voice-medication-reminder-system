@@ -37,7 +37,7 @@ const getVoices = async () => {
  * @param {Object} options - Additional options for the TTS request
  * @returns {Promise<string>} - Path to the generated audio file
  */
-const textToSpeech = async (text, voiceId = 'gOkFV1JMCt0G0n9xmBwV', options = {}) => {
+const textToSpeechToFile = async (text, voiceId = 'gOkFV1JMCt0G0n9xmBwV', options = {}) => {
   try {
     const fileName = `tts_${Date.now()}.mp3`;
     const filePath = path.join(AUDIO_OUTPUT_DIR, fileName);
@@ -77,14 +77,29 @@ const textToSpeech = async (text, voiceId = 'gOkFV1JMCt0G0n9xmBwV', options = {}
 };
 
 /**
+ * Convert text to speech using ElevenLabs API and return a stream
+ * @param {string} text - The text to convert to speech
+ * @param {string} voiceId - The ID of the voice to use (default: 'gOkFV1JMCt0G0n9xmBwV')
+ * @returns {ReadableStream} - The audio stream
+ */
+const textToSpeechToStream = async (text, voiceId = 'gOkFV1JMCt0G0n9xmBwV') => {
+  const audioStream = await elevenlabs.textToSpeech.convert(voiceId, {
+    model_id: 'eleven_turbo_v2_5',
+    output_format: 'ulaw_8000',
+    text: text,
+  });
+  return audioStream;
+};
+
+/**
  * Generate TTS for medication reminder
  * @param {string} message - The medication reminder message
  * @returns {Promise<string>} - URL to the generated audio file
  */
 const generateMedicationReminder = async (message) => {
   try {
-    const fileName = await textToSpeech(message);
-    const audioUrl = `${process.env.BASE_URL}/audio/${fileName}`;
+    const fileName = await textToSpeechToFile(message);
+    const audioUrl = `https://${process.env.BASE_DOMAIN}/audio/${fileName}`;
     
     logger.info(`Generated medication reminder audio: ${audioUrl}`);
     return audioUrl;
@@ -118,9 +133,9 @@ const deleteAudioFile = async (fileName) => {
 };
 
 module.exports = {
-  elevenlabs,
   getVoices,
-  textToSpeech,
+  textToSpeechToStream,
+  textToSpeechToFile,
   generateMedicationReminder,
   deleteAudioFile
 };

@@ -1,6 +1,5 @@
 const twilio = require('twilio');
 const logger = require('../utils/logger');
-const elevenlabsService = require('./elevenlabsService');
 
 // Initialize Twilio client
 const client = twilio(
@@ -8,7 +7,6 @@ const client = twilio(
   process.env.TWILIO_AUTH_TOKEN
 );
 
-const MEDICATION_REMINDER_MESSAGE = "Hello, this is a reminder from your healthcare provider to confirm your medications for the day. Please confirm if you have taken your Aspirin, Cardivol, and Metformin today.";
 const VOICEMAIL_MESSAGE = "We called to check on your medication but couldn't reach you. Please call us back or take your medications if you haven't done so."
 
 /**
@@ -23,18 +21,17 @@ const generateTwimlWithElevenLabs = (audioUrl) => {
 };
 
 /**
- * Make an outgoing call to a patient with ElevenLabs TTS
+ * Make an outgoing call to a patient with Media Streams
  * @param {string} phoneNumber - The patient's phone number
- * @param {string} message - Optional custom message (defaults to medication reminder)
  * @returns {Promise} - The Twilio call object
  */
-const makeCall = async (phoneNumber, message = MEDICATION_REMINDER_MESSAGE) => {
+const makeCall = async (phoneNumber) => {
   try {
-    // Generate audio with ElevenLabs
-    const audioUrl = await elevenlabsService.generateMedicationReminder(message);
-    
-    // Create TwiML with the audio URL
-    const twiml = generateTwimlWithElevenLabs(audioUrl);
+    // Create TwiML with Media Streams
+    const twiml = new twilio.twiml.VoiceResponse();
+    twiml.connect().stream({
+      url: `wss://${process.env.BASE_DOMAIN}/api/calls/stream`
+    });
     
     // Make the call
     const call = await client.calls.create({
@@ -42,15 +39,15 @@ const makeCall = async (phoneNumber, message = MEDICATION_REMINDER_MESSAGE) => {
       from: process.env.TWILIO_PHONE_NUMBER,
       machineDetection: 'DetectMessageEnd',
       twiml: twiml.toString(),
-      statusCallback: `${process.env.BASE_URL}/api/calls/status`,
+      statusCallback: `https://${process.env.BASE_DOMAIN}/api/calls/status`,
       statusCallbackMethod: 'POST',
       statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed']
     });
     
-    logger.info(`Call initiated to ${phoneNumber} with ElevenLabs TTS`);
+    logger.info(`Call initiated to ${phoneNumber} with Media Streams`);
     return call;
   } catch (error) {
-    logger.error('Error making call with ElevenLabs TTS:', error);
+    logger.error('Error making call with Media Streams:', error);
     throw error;
   }
 };
@@ -100,7 +97,6 @@ const handleCallStatus = async (statusData) => {
 };
 
 module.exports = {
-  MEDICATION_REMINDER_MESSAGE,
   makeCall,
   handleAnsweringMachine,
   handleCallStatus,
